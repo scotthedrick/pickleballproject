@@ -11,5 +11,6 @@
 
 module.exports = [
   require('./001-baseline-schema'),
-  require('./002-game-version')
+  require('./002-game-version'),
+  require('./003-hosts')
 ];

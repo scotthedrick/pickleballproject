@@ -31,27 +31,39 @@ function mapRosterRow(row) {
   };
 }
 
+function mapHostRow(row) {
+  return {
+    phone: row.phone,
+    name: row.name || '',
+    updatedAt: row.updated_at
+  };
+}
+
 async function getDeveloperRosterSources() {
   if (isProduction) {
     return withPgClient(async (client) => {
-      const [games, roster] = await Promise.all([
+      const [games, roster, hosts] = await Promise.all([
         client.query('SELECT id, host_phone, data, updated_at FROM games'),
-        client.query('SELECT * FROM host_roster')
+        client.query('SELECT * FROM host_roster'),
+        client.query('SELECT * FROM hosts')
       ]);
       return {
         games: games.rows.map(mapGameRow),
-        rosterRows: roster.rows.map(mapRosterRow)
+        rosterRows: roster.rows.map(mapRosterRow),
+        hosts: hosts.rows.map(mapHostRow)
       };
     });
   }
 
-  const [games, rosterRows] = await Promise.all([
+  const [games, rosterRows, hosts] = await Promise.all([
     sqliteAll('SELECT id, host_phone, data, updated_at FROM games'),
-    sqliteAll('SELECT * FROM host_roster')
+    sqliteAll('SELECT * FROM host_roster'),
+    sqliteAll('SELECT * FROM hosts')
   ]);
   return {
     games: games.map(mapGameRow),
-    rosterRows: rosterRows.map(mapRosterRow)
+    rosterRows: rosterRows.map(mapRosterRow),
+    hosts: hosts.map(mapHostRow)
   };
 }
 
@@ -281,12 +293,14 @@ async function deleteDeveloperHost(phone) {
           'DELETE FROM host_roster WHERE host_phone = $1',
           [phone]
         );
+        const hostResult = await client.query('DELETE FROM hosts WHERE phone = $1', [phone]);
         await client.query('COMMIT');
         return {
           games: gameResult.rowCount,
           photos: photoResult.rowCount,
           reminders: reminderResult.rowCount,
-          rosterEntries: rosterResult.rowCount
+          rosterEntries: rosterResult.rowCount,
+          hostRecords: hostResult.rowCount
         };
       } catch (error) {
         await client.query('ROLLBACK');
@@ -315,13 +329,82 @@ async function deleteDeveloperHost(phone) {
       'DELETE FROM host_roster WHERE host_phone = ?',
       [phone]
     );
+    const hostResult = await sqliteRun('DELETE FROM hosts WHERE phone = ?', [phone]);
     await sqliteRun('COMMIT');
     return {
       games: gameResult.changes,
       photos: photoResult.changes,
       reminders: reminderResult.changes,
-      rosterEntries: rosterResult.changes
+      rosterEntries: rosterResult.changes,
+      hostRecords: hostResult.changes
     };
+  } catch (error) {
+    await sqliteRun('ROLLBACK');
+    throw error;
+  }
+}
+
+/**
+ * Copies chosen players onto one host's saved roster.
+ *
+ * DO NOTHING rather than DO UPDATE, deliberately. Everywhere else a host's own saved row is
+ * treated as the deliberate version of a player's details (see database/roster.js), and this
+ * runs against hosts who may already have a roster - so somebody the host has already named
+ * keeps that name, and is reported back as skipped rather than silently rewritten.
+ *
+ * Sends nothing. Adding a player to a roster is not an invitation; the host texts people when
+ * they create a game.
+ *
+ * @param {string} hostPhone
+ * @param {Array<{phone: string, name?: string, duprId?: string, duprRating?: number|null}>} players
+ * @returns {Promise<{added: string[], skipped: string[]}>}
+ */
+async function addPlayersToHostRoster(hostPhone, players) {
+  const INSERT_POSTGRES = `
+    INSERT INTO host_roster (host_phone, player_phone, name, dupr_id, dupr_rating, updated_at)
+    VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+    ON CONFLICT (host_phone, player_phone) DO NOTHING`;
+  const INSERT_SQLITE = `
+    INSERT INTO host_roster (host_phone, player_phone, name, dupr_id, dupr_rating, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT (host_phone, player_phone) DO NOTHING`;
+
+  const values = (player) => [
+    hostPhone,
+    player.phone,
+    player.name || null,
+    player.duprId || null,
+    player.duprRating == null || player.duprRating === '' ? null : Number(player.duprRating)
+  ];
+
+  const added = [];
+  const skipped = [];
+
+  if (isProduction) {
+    return withPgClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        for (const player of players) {
+          const result = await client.query(INSERT_POSTGRES, values(player));
+          (result.rowCount ? added : skipped).push(player.phone);
+        }
+        await client.query('COMMIT');
+        return { added, skipped };
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    });
+  }
+
+  await sqliteRun('BEGIN IMMEDIATE');
+  try {
+    for (const player of players) {
+      const result = await sqliteRun(INSERT_SQLITE, values(player));
+      (result.changes ? added : skipped).push(player.phone);
+    }
+    await sqliteRun('COMMIT');
+    return { added, skipped };
   } catch (error) {
     await sqliteRun('ROLLBACK');
     throw error;
@@ -332,5 +415,6 @@ module.exports = {
   getDeveloperRosterSources,
   updateDeveloperPlayer,
   deleteDeveloperPlayer,
-  deleteDeveloperHost
+  deleteDeveloperHost,
+  addPlayersToHostRoster
 };

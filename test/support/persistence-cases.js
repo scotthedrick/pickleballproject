@@ -20,6 +20,11 @@ const assert = require('node:assert/strict');
 
 const PREFIX = 'parity-';
 
+// Reserved 555 numbers for the host-and-roster cases, kept away from the game fixtures.
+const SEEDED_HOST = '5557779001';
+const SEEDED_PLAYER_ONE = '5557779002';
+const SEEDED_PLAYER_TWO = '5557779003';
+
 function newGame(extra = {}) {
   return {
     gameName: 'Parity Test',
@@ -66,6 +71,9 @@ function registerPersistenceCases(engine) {
   } = require('../../database/games');
   const { savePhoto, getPhotosForGame } = require('../../database/locations-media');
   const { markReminderSent, hasReminderBeenSent } = require('../../database/messaging-reminders');
+  const { upsertHost, listHosts, getHost, deleteHost } = require('../../database/hosts');
+  const { upsertRosterEntry, getRosterForHost, deleteRosterEntry } = require('../../database/roster');
+  const { addPlayersToHostRoster } = require('../../database/dev-rosters');
 
   const created = new Set();
   async function makeGame(name, extra) {
@@ -87,6 +95,10 @@ function registerPersistenceCases(engine) {
     after(async () => {
       for (const id of created) {
         await deleteGamePermanently(id);
+      }
+      await deleteHost(SEEDED_HOST);
+      for (const phone of [SEEDED_PLAYER_ONE, SEEDED_PLAYER_TWO]) {
+        await deleteRosterEntry(SEEDED_HOST, phone);
       }
     });
 
@@ -215,6 +227,65 @@ function registerPersistenceCases(engine) {
         await markReminderSent(id, phone, '24h');
         assert.equal(await hasReminderBeenSent(id, phone, '24h'), true);
         assert.equal(await hasReminderBeenSent(id, phone, '2h'), false);
+      });
+    });
+
+    // A host set up in the developer area, and the starter roster they are given. Both write
+    // through ON CONFLICT clauses whose "did this actually insert?" answer is read from
+    // rowCount on PostgreSQL and changes on SQLite - two different properties of two
+    // different driver objects, which is exactly the kind of thing only parity catches.
+    describe('a host and their starter roster', () => {
+      it('creates a host, and a second write keeps the existing name', async () => {
+        await deleteHost(SEEDED_HOST);
+        await upsertHost(SEEDED_HOST, 'Brett Olson');
+        assert.equal((await getHost(SEEDED_HOST)).name, 'Brett Olson');
+
+        // A later write with no name must not blank the one already stored.
+        await upsertHost(SEEDED_HOST, '');
+        assert.equal((await getHost(SEEDED_HOST)).name, 'Brett Olson');
+
+        await upsertHost(SEEDED_HOST, 'Brett O.');
+        assert.equal((await getHost(SEEDED_HOST)).name, 'Brett O.');
+        assert.ok((await listHosts()).some((host) => host.phone === SEEDED_HOST));
+      });
+
+      it('adds each player once and reports who was already there', async () => {
+        for (const phone of [SEEDED_PLAYER_ONE, SEEDED_PLAYER_TWO]) {
+          await deleteRosterEntry(SEEDED_HOST, phone);
+        }
+
+        const first = await addPlayersToHostRoster(SEEDED_HOST, [
+          { phone: SEEDED_PLAYER_ONE, name: 'Player One', duprId: 'DUPR-1', duprRating: 4.25 },
+          { phone: SEEDED_PLAYER_TWO, name: 'Player Two', duprId: '', duprRating: null }
+        ]);
+        assert.deepEqual(first.added.sort(), [SEEDED_PLAYER_ONE, SEEDED_PLAYER_TWO].sort());
+        assert.deepEqual(first.skipped, []);
+
+        const stored = await getRosterForHost(SEEDED_HOST);
+        const one = stored.find((entry) => entry.playerPhone === SEEDED_PLAYER_ONE);
+        assert.equal(one.name, 'Player One');
+        assert.equal(one.duprId, 'DUPR-1');
+        assert.equal(one.duprRating, 4.25, 'REAL and NUMERIC both come back as a number');
+
+        // The host renames somebody, then the same seeding runs again.
+        await upsertRosterEntry(SEEDED_HOST, SEEDED_PLAYER_ONE, 'Big Al', 'DUPR-1', 4.25);
+        const second = await addPlayersToHostRoster(SEEDED_HOST, [
+          { phone: SEEDED_PLAYER_ONE, name: 'Player One', duprId: '', duprRating: null },
+          { phone: SEEDED_PLAYER_TWO, name: 'Player Two', duprId: '', duprRating: null }
+        ]);
+        assert.deepEqual(second.added, [], 'nobody is added twice');
+        assert.deepEqual(
+          second.skipped.sort(),
+          [SEEDED_PLAYER_ONE, SEEDED_PLAYER_TWO].sort()
+        );
+
+        const after = await getRosterForHost(SEEDED_HOST);
+        assert.equal(
+          after.find((entry) => entry.playerPhone === SEEDED_PLAYER_ONE).name,
+          'Big Al',
+          'a name the host saved survives a second seeding'
+        );
+        assert.equal(after.length, 2);
       });
     });
   });

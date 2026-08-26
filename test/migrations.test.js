@@ -56,7 +56,7 @@ describe('migrations on a fresh database', () => {
         'games', 'sms_contexts', 'reminder_log', 'locations', 'host_roster', 'game_photos',
         'court_images', 'dev_notes', 'app_errors', 'sms_events', 'dev_assets',
         'message_personalities', 'personality_surface_settings', 'message_codex_prompts',
-        'message_target_rules', 'randomizer_messages', 'message_selection_events',
+        'message_target_rules', 'randomizer_messages', 'message_selection_events', 'hosts',
         MIGRATIONS_TABLE
       ]) {
         assert.ok(names.includes(expected), `missing table ${expected}`);

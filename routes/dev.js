@@ -34,8 +34,11 @@ const {
   getDeveloperRosterSources,
   updateDeveloperPlayer,
   deleteDeveloperPlayer,
-  deleteDeveloperHost
+  deleteDeveloperHost,
+  addPlayersToHostRoster
 } = require('../database/dev-rosters');
+const { upsertHost } = require('../database/hosts');
+const { deleteRosterEntry } = require('../database/roster');
 const {
   getAllUploadedImages,
   deleteUploadedImage,
@@ -46,7 +49,8 @@ const {
 const { syncLegacySurfaceMessages } = require('../database/message-seeds');
 const {
   buildDeveloperRosters,
-  chooseDeveloperRosterSource
+  chooseDeveloperRosterSource,
+  resolveStarterRosterPlayers
 } = require('../utils/dev-rosters');
 // isValidUsPhone is the app's one phone rule. The roster editors below used to spell their own
 // version of it (`formatPhoneNumber(value).length !== 10`), which happens to agree with it
@@ -778,6 +782,145 @@ module.exports = function mountDevRoutes(app) {
           ? 'Could not load the live production rosters. You can switch to local test data.'
           : 'Could not load the host and player rosters.'
       });
+    }
+  });
+
+  // Set a host up before they have ever opened the app: name them, then hand them a starter
+  // roster with the next route. Nothing here texts anybody - the host does that themselves,
+  // when they create their first game.
+  //
+  // The phone number is the identity. A host seeded here only meets their roster if they
+  // create their game with this exact number, which is why the UI says so out loud.
+  app.post('/api/dev/hosts', requireDevAuth, async (req, res) => {
+    const phone = formatPhoneNumber(req.body && req.body.phone);
+    const name = String((req.body && req.body.name) || '').trim();
+
+    if (!isValidUsPhone(req.body && req.body.phone)) {
+      return res.status(400).json({ error: 'Enter a 10-digit US phone number.' });
+    }
+    if (!name) return res.status(400).json({ error: 'Enter the host’s name.' });
+    if (name.length > 100) {
+      return res.status(400).json({ error: 'Host names can be up to 100 characters.' });
+    }
+
+    try {
+      const source = selectedDeveloperRosterSource(req);
+      if (!isProduction && source === 'production') {
+        const live = await requestProductionDeveloperApi('/api/dev/hosts', {
+          method: 'POST',
+          body: { phone, name }
+        });
+        return res.status(live.status).json(live.data);
+      }
+
+      const current = buildDeveloperRosters(await getDeveloperRosterSources());
+      if (current.hosts.some((host) => host.phone === phone)) {
+        return res.status(409).json({
+          error: 'That number is already a host. Open their card below to add players to their roster.'
+        });
+      }
+
+      await upsertHost(phone, name);
+      res.json({ success: true, host: { phone, name } });
+    } catch (err) {
+      console.error('Error adding developer host:', err);
+      res.status(500).json({ error: 'Could not add the host.' });
+    }
+  });
+
+  // The starter roster itself: copy chosen people from the master directory onto one host's
+  // saved roster. Names and DUPR details are resolved on the server from what the app already
+  // knows, so the browser only ever sends phone numbers.
+  app.post('/api/dev/hosts/:phone/roster', requireDevAuth, async (req, res) => {
+    const hostPhone = formatPhoneNumber(req.params.phone);
+    const requested = Array.isArray(req.body && req.body.phones) ? req.body.phones : null;
+
+    if (!isValidUsPhone(req.params.phone)) {
+      return res.status(400).json({ error: 'Enter a 10-digit US phone number.' });
+    }
+    if (!requested || !requested.length) {
+      return res.status(400).json({ error: 'Select at least one player to add.' });
+    }
+    // A roster this size is already past what anybody picks by hand, and the bound keeps one
+    // request from becoming an unbounded write loop.
+    if (requested.length > 250) {
+      return res.status(400).json({ error: 'Add up to 250 players at a time.' });
+    }
+
+    try {
+      const source = selectedDeveloperRosterSource(req);
+      if (!isProduction && source === 'production') {
+        const live = await requestProductionDeveloperApi(
+          `/api/dev/hosts/${encodeURIComponent(hostPhone)}/roster`,
+          { method: 'POST', body: { phones: requested } }
+        );
+        return res.status(live.status).json(live.data);
+      }
+
+      const sources = await getDeveloperRosterSources();
+      const directory = buildDeveloperRosters(sources);
+      if (!directory.hosts.some((host) => host.phone === hostPhone)) {
+        return res.status(404).json({ error: 'That host is no longer in the directory.' });
+      }
+
+      const { players, unknown, selfSelected } =
+        resolveStarterRosterPlayers(sources, hostPhone, requested);
+      if (unknown.length) {
+        return res.status(400).json({
+          error: 'Some of those players are no longer in the master roster. Reload and try again.'
+        });
+      }
+      if (!players.length) {
+        return res.status(400).json({
+          error: selfSelected
+            ? 'A host cannot be added to their own roster.'
+            : 'Select at least one player to add.'
+        });
+      }
+
+      const { added, skipped } = await addPlayersToHostRoster(hostPhone, players);
+      res.json({
+        success: true,
+        added: added.length,
+        alreadyOnRoster: skipped.length,
+        selfSkipped: selfSelected
+      });
+    } catch (err) {
+      console.error('Error seeding a host roster:', err);
+      res.status(500).json({ error: 'Could not add those players to the roster.' });
+    }
+  });
+
+  // Undo one pick. This removes the saved row only - somebody who is also in one of the
+  // host's games stays visible to them, because the roster they see is the union of both.
+  app.delete('/api/dev/hosts/:phone/roster/:playerPhone', requireDevAuth, async (req, res) => {
+    const hostPhone = formatPhoneNumber(req.params.phone);
+    const playerPhone = formatPhoneNumber(req.params.playerPhone);
+
+    if (!isValidUsPhone(req.params.phone) || !isValidUsPhone(req.params.playerPhone)) {
+      return res.status(400).json({ error: 'Enter a 10-digit US phone number.' });
+    }
+
+    try {
+      const source = selectedDeveloperRosterSource(req);
+      if (!isProduction && source === 'production') {
+        const live = await requestProductionDeveloperApi(
+          `/api/dev/hosts/${encodeURIComponent(hostPhone)}/roster/${encodeURIComponent(playerPhone)}`,
+          { method: 'DELETE' }
+        );
+        return res.status(live.status).json(live.data);
+      }
+
+      const removed = await deleteRosterEntry(hostPhone, playerPhone);
+      if (!removed) {
+        return res.status(404).json({
+          error: 'That player was not on this host’s saved roster.'
+        });
+      }
+      res.json({ success: true, removed });
+    } catch (err) {
+      console.error('Error removing a seeded roster entry:', err);
+      res.status(500).json({ error: 'Could not remove that player from the roster.' });
     }
   });
 
