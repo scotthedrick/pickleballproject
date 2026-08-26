@@ -1415,6 +1415,83 @@ async function uploadGamePhoto(baseUrl, game, bytes, contentType, caption) {
       'developer area identifies each player’s host roster while automated local servers stay locked away from production'
     );
 
+    // Setting a brand new host up and handing them a starter roster, which is the whole
+    // reason the developer area can create a host at all.
+    const starterHost = await desktop.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const form = document.getElementById('addHostForm');
+      form.elements.name.value = 'Smoke Starter Host';
+      form.elements.phone.value = '(555) 555-0991';
+      form.requestSubmit();
+      await wait(500);
+
+      const card = document.querySelector('.host-roster[data-host-phone="5555550991"]');
+      const created = {
+        listed: Boolean(card),
+        name: card?.querySelector('.roster-person-name')?.textContent.trim(),
+        startsEmpty: card?.querySelector('.host-roster-players .muted')?.textContent.trim(),
+        opened: card?.open === true
+      };
+      if (!card) return created;
+
+      card.querySelector('[data-host-action="pick"]').click();
+      await wait(120);
+      const picker = card.querySelector('[data-picker]');
+      const option = picker.querySelector('.host-picker-option[data-player-phone="${fx.JOIN_PHONE}"]');
+      created.pickerOpened = !picker.classList.contains('hidden');
+      created.offersPlayer = Boolean(option);
+      // The host themselves is never on offer.
+      created.excludesHost = !picker.querySelector('.host-picker-option[data-player-phone="5555550991"]');
+
+      option.querySelector('input').checked = true;
+      option.querySelector('input').dispatchEvent(new Event('change', { bubbles: true }));
+      const addButton = picker.querySelector('[data-host-action="add-players"]');
+      created.addLabel = addButton.textContent.trim();
+      addButton.click();
+      await wait(600);
+
+      const seeded = document.querySelector('.host-roster[data-host-phone="5555550991"]');
+      const row = seeded?.querySelector('.host-roster-player[data-player-phone="${fx.JOIN_PHONE}"]');
+      created.stillOpen = seeded?.open === true;
+      created.seededPlayer = Boolean(row);
+      created.removeLabel = row?.querySelector('[data-host-action="remove-player"]')?.textContent.trim();
+      created.result = seeded?.querySelector('.host-roster-status')?.textContent.trim();
+
+      row.querySelector('[data-host-action="remove-player"]').click();
+      await wait(600);
+      const afterRemoval = document.querySelector('.host-roster[data-host-phone="5555550991"]');
+      created.removed = !afterRemoval?.querySelector(
+        '.host-roster-player[data-player-phone="${fx.JOIN_PHONE}"]'
+      );
+
+      // Leave the local database as this smoke found it.
+      await fetch('/api/dev/hosts/5555550991?source=local', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPhone: '5555550991' })
+      });
+      await DevDashboard.loadRosters('local');
+      created.cleanedUp = !document.querySelector('.host-roster[data-host-phone="5555550991"]');
+      return created;
+    })()`);
+    assert(
+      starterHost.listed &&
+        starterHost.name === 'Smoke Starter Host' &&
+        starterHost.startsEmpty === 'No players on this roster.' &&
+        starterHost.opened &&
+        starterHost.pickerOpened &&
+        starterHost.offersPlayer &&
+        starterHost.excludesHost &&
+        starterHost.addLabel === 'Add 1 Selected Player' &&
+        starterHost.seededPlayer &&
+        starterHost.stillOpen &&
+        starterHost.removeLabel === 'Remove' &&
+        starterHost.result === '1 added.' &&
+        starterHost.removed &&
+        starterHost.cleanedUp,
+      'a new host can be created and given a starter roster from existing players'
+    );
+
     const rosterEdit = await desktop.evaluate(`(async () => {
       const player = document.querySelector('[data-player-phone="${fx.JOIN_PHONE}"]');
       player.querySelector('[data-roster-action="edit"]').click();

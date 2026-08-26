@@ -561,8 +561,29 @@
         </div>
       </div>
       <div class="panel">
+        <h2>Add A Host</h2>
+        <p class="muted">
+          Set a host up before their first visit, then give them their starter roster below.
+          Use the phone number they will create their game with — that number is how the app
+          recognizes them, and a different one gets a different roster. Nobody is texted.
+        </p>
+        <form id="addHostForm" class="add-host-form">
+          <label>Host Name
+            <input name="name" maxlength="100" placeholder="Brett Olson" required>
+          </label>
+          <label>Phone Number
+            <input name="phone" inputmode="tel" autocomplete="off" placeholder="(555) 123-4567" required>
+          </label>
+          <button type="submit" class="primary">Add Host</button>
+        </form>
+        <div class="roster-form-status" id="addHostStatus" aria-live="polite"></div>
+      </div>
+      <div class="panel">
         <h2>Every Host And Roster</h2>
-        <p class="muted">Open a host to see every player associated with their games.</p>
+        <p class="muted">
+          Open a host to see every player associated with their games, and to build the roster
+          they see the first time they open the management area.
+        </p>
         <div class="host-roster-list" id="hostRosterList" style="margin-top:16px">
           <p class="muted">Loading…</p>
         </div>

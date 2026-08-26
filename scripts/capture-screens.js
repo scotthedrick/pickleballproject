@@ -206,16 +206,27 @@ const clearHostPhone = async (p) => {
   await cdp.sleep(2000);
 };
 
+// The developer-area sign-in every dev screen needs, as one snippet.
+//
+// The sign-in cookie lasts thirty days and the browser holds it across screens, so asking for
+// a fresh one per screen was never necessary - and /api/dev/login is rate limited to ten
+// attempts per fifteen minutes, which a full run of the dev screens now sits right on top of.
+// Checking /api/dev/status first means one password post per run instead of one per screen.
+const devSignInSnippet = () => `
+    const alreadyIn = await fetch('/api/dev/status');
+    if (!alreadyIn.ok) {
+      const response = await fetch('/api/dev/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: ${JSON.stringify(server.DEV_PASSWORD)} })
+      });
+      if (!response.ok) throw new Error('Developer sign-in failed');
+    }
+    DevDashboard.showApp();`;
+
 const openDeveloperRosters = async (p) => {
-  const password = JSON.stringify(server.DEV_PASSWORD);
   await p.evaluate(`(async () => {
-    const response = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!response.ok) throw new Error('Developer sign-in failed');
-    DevDashboard.showApp();
+    ${devSignInSnippet()}
     document.querySelector('[data-tab="rosters"]').click();
   })()`);
   await cdp.sleep(1400);
@@ -230,31 +241,50 @@ const openDeveloperRosters = async (p) => {
   await cdp.sleep(300);
 };
 
-const openDeveloperStatus = async (p) => {
-  const password = JSON.stringify(server.DEV_PASSWORD);
+// The starter-roster picker, open on a fixture host. This photographs the controls only -
+// it deliberately creates no host, because the capture server shares the developer's local
+// SQLite database and a screenshot must not leave a row behind in it.
+//
+// Deliberately not built on openDeveloperRosters: that one opens a delete confirmation, which
+// belongs in its own screenshot and would read here as though deleting were part of this flow.
+const openDeveloperStarterRoster = async (p) => {
   await p.evaluate(`(async () => {
-    const response = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!response.ok) throw new Error('Developer sign-in failed');
-    DevDashboard.showApp();
+    ${devSignInSnippet()}
+    document.querySelector('[data-tab="rosters"]').click();
+  })()`);
+  await cdp.sleep(1400);
+  // Same reason as openDeveloperRosters: this shares the developer's local SQLite database,
+  // so both lists are filtered to the reserved 555 fixture numbers and no real contact of
+  // Scott's can appear in a generated image.
+  await p.evaluate(`(async () => {
+    const search = document.getElementById('rosterSearch');
+    search.value = '5555550';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const card = document.querySelector('#hostRosterList .host-roster');
+    if (!card) return;
+    card.querySelector('[data-host-action="pick"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const picker = card.querySelector('.host-picker-search');
+    if (picker) {
+      picker.value = '5555550';
+      picker.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  })()`);
+  await cdp.sleep(400);
+};
+
+const openDeveloperStatus = async (p) => {
+  await p.evaluate(`(async () => {
+    ${devSignInSnippet()}
     document.querySelector('[data-tab="status"]').click();
   })()`);
   await cdp.sleep(900);
 };
 
 const openDeveloperMessageRandomizer = async (p) => {
-  const password = JSON.stringify(server.DEV_PASSWORD);
   await p.evaluate(`(async () => {
-    const response = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!response.ok) throw new Error('Developer sign-in failed');
-    DevDashboard.showApp();
+    ${devSignInSnippet()}
     document.querySelector('[data-tab="message-randomizer"]').click();
   })()`);
   await cdp.sleep(1000);
@@ -299,30 +329,16 @@ const openDeveloperMessageRandomizerPrompts = async (p) => {
 };
 
 const openDeveloperRules = async (p) => {
-  const password = JSON.stringify(server.DEV_PASSWORD);
   await p.evaluate(`(async () => {
-    const response = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!response.ok) throw new Error('Developer sign-in failed');
-    DevDashboard.showApp();
+    ${devSignInSnippet()}
     document.querySelector('[data-tab="rules"]').click();
   })()`);
   await cdp.sleep(500);
 };
 
 const openDeveloperVibeCoder101 = async (p) => {
-  const password = JSON.stringify(server.DEV_PASSWORD);
   await p.evaluate(`(async () => {
-    const response = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!response.ok) throw new Error('Developer sign-in failed');
-    DevDashboard.showApp();
+    ${devSignInSnippet()}
     document.querySelector('[data-tab="vibe-coder-101"]').click();
   })()`);
   await cdp.sleep(250);
@@ -344,14 +360,8 @@ const openDeveloperImages = (fx) => async (p) => {
   // thumbnails without keeping a second decorative image asset in the repository.
   const fixturePath = path.join(ROOT, 'docs', 'screens', 'game-open.webp');
   const imageBase64 = fs.readFileSync(fixturePath).toString('base64');
-  const password = JSON.stringify(server.DEV_PASSWORD);
   await p.evaluate(`(async () => {
-    const signIn = await fetch('/api/dev/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: ${password} })
-    });
-    if (!signIn.ok) throw new Error('Developer sign-in failed');
+    ${devSignInSnippet()}
     const bytes = Uint8Array.from(
       atob(${JSON.stringify(imageBase64)}),
       (character) => character.charCodeAt(0)
@@ -544,6 +554,10 @@ function buildScreens(fx) {
       title: 'Hosts And Players',
       note: 'The password-protected master player roster and every host roster, with guarded global edit and delete controls.',
       act: openDeveloperRosters },
+    { file: 'dev-add-host-starter-roster', of: '/dev.html', size: 'tall', url: '/dev.html',
+      title: 'Add A Host And Their Starter Roster',
+      note: 'Setting a host up before their first visit, then picking who they start with from every player already in the app. Nobody is texted, and the phone number entered here is the one that host must create their game with.',
+      act: openDeveloperStarterRoster },
     { file: 'dev-status-text-events', of: '/dev.html', size: 'tall', url: '/dev.html',
       title: 'Status And Text Events',
       note: 'Live operational health plus every outbound text trigger, with totals, recent counts, failures, retries and unique recipients.',

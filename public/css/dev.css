@@ -496,6 +496,44 @@ dl.facts dd { margin: 0; }
   gap: 12px; justify-content: space-between; padding: 11px 0;
 }
 .host-roster-player:last-child { border-bottom: 0; }
+.host-roster-player .roster-person-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.host-roster-remove {
+  background: var(--surface); border: 1px solid var(--border-strong); color: var(--muted);
+  flex: 0 0 auto; font-size: 12px; font-weight: 700; min-height: 32px; padding: 0 10px;
+}
+.host-roster-remove:hover { background: var(--quiet); color: var(--ink); }
+.host-roster-from-game { color: var(--subtle); flex: 0 0 auto; font-size: 12px; }
+
+/* Adding a host, and giving that host a starter roster. */
+.add-host-form {
+  align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px;
+}
+.add-host-form label {
+  display: grid; flex: 1 1 200px; font-size: 13px; font-weight: 650; gap: 5px;
+}
+.add-host-form button { flex: 0 0 auto; }
+.host-roster-tools { border-top: 1px solid var(--border); padding: 12px 15px 0; }
+.host-player-picker {
+  border-top: 1px solid var(--border); display: grid; gap: 12px; margin-top: 12px;
+  padding: 14px 15px;
+}
+.host-player-picker p { margin: 0; }
+.host-picker-list {
+  border: 1px solid var(--border); border-radius: 10px; display: grid;
+  max-height: 320px; overflow-y: auto;
+}
+.host-picker-option {
+  align-items: center; border-bottom: 1px solid var(--border); cursor: pointer;
+  display: flex; gap: 12px; padding: 10px 12px;
+}
+.host-picker-option:last-child { border-bottom: 0; }
+.host-picker-option:hover { background: var(--quiet); }
+.host-picker-option input { flex: 0 0 auto; height: 18px; margin: 0; width: 18px; }
+.host-picker-option .roster-person-name { flex: 1 1 auto; min-width: 0; }
+.host-picker-option .roster-person-phone { flex: 0 0 auto; }
+.host-roster-status { color: var(--danger); font-size: 13px; padding: 0 15px; }
+.host-roster-status:empty { display: none; }
+.host-roster-status.good, .roster-form-status.good { color: var(--brand); }
 @media (max-width: 600px) {
   .roster-source { align-items: stretch; flex-direction: column; }
   .roster-toolbar, .master-player-main { align-items: stretch; flex-direction: column; }
