@@ -8,6 +8,9 @@ import * as PageUtils from '../page-utils.js';
 import * as CentralTime from '../central-time.js';
 import { showStatus, showConfirmModal, formatDateForDisplay, formatTime } from './game.js';
 
+// personalityWrapper defaults off because the quick messages below show the host the exact text
+// in a confirm modal before sending. The custom announcement has no such preview and always
+// opts in - see sendAnnouncement.
 async function postAnnouncement(message, recipients, { personalityWrapper = false } = {}) {
     const response = await request(
         `/api/games/${gameId}/announcement-individual`,
@@ -57,16 +60,13 @@ export async function sendAnnouncement() {
         
         showStatus('Sending announcement...', 'info');
 
-        const data = await postAnnouncement(message, recipients, {
-            personalityWrapper: document.getElementById(
-                'announcementPersonalityWrapper'
-            ).checked
-        });
+        // The host used to tick a box for this. Now that every player-facing text carries the
+        // game's personality, the opening is always on and there is nothing to decide.
+        const data = await postAnnouncement(message, recipients, { personalityWrapper: true });
         console.log('Announcement sent:', data);
-        
+
         // Reset form
         document.getElementById('announcementText').value = '';
-        document.getElementById('announcementPersonalityWrapper').checked = false;
         clearAllRecipientSelections();
 
         // The log below is about what this game has texted, so a send belongs in it now.
